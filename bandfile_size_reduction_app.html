@@ -1,0 +1,133 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Garagebandサイズ削減アプリ</title>
+
+<link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+</head>
+
+<body>
+<div class="container">
+
+<header class="d-flex flex-wrap justify-content-center py-3 mb-4 border-bottom">
+    <span class="fs-4">Garagebandサイズ削減アプリ</span>
+</header>
+
+<div class="row align-items-center g-lg-5 py-5">
+
+    <div class="col-lg-7 text-center text-lg-start">
+        <h1 class="display-4 fw-bold lh-1 text-body-emphasis mb-3">Garageband</h1>
+        <h1 class="display-4 fw-bold lh-1 text-body-emphasis mb-3">サイズ削減アプリ</h1>
+        <p class="col-lg-10 fs-4">
+            Garageband MIDIデータ抽出アプリ用にファイルのサイズを削減
+        </p>
+    </div>
+
+    <div class="col-md-10 mx-auto col-lg-5">
+        <form class="p-4 p-md-5 border rounded-3 bg-body-tertiary">
+
+            <div class="form-floating mb-3">
+                <div>
+                    <label class="form-label">
+                        Garageband の プロジェクトファイルを zip で圧縮してアップロード
+                    </label>
+                    <input class="form-control form-control-lg" id="formFileLg" type="file" accept=".zip">
+                </div>
+            </div>
+
+            <button class="w-100 btn btn-lg btn-primary" 
+                    type="button" 
+                    id="processButton"
+                    onclick="processZip()" 
+                    disabled>
+                <span id="spinner" hidden class="spinner-border spinner-border-sm"></span>
+                <span id="button_label">サイズ削減開始</span>
+            </button>
+
+        </form>
+    </div>
+
+</div>
+</div>
+
+<script>
+
+const fileInput = document.getElementById("formFileLg");
+const processButton = document.getElementById("processButton");
+
+fileInput.addEventListener("change", () => {
+    processButton.disabled = fileInput.files.length === 0;
+});
+
+async function processZip() {
+
+    if (!fileInput.files.length) return;
+
+    processButton.disabled = true;
+
+    const file = fileInput.files[0];
+    const spinner = document.getElementById("spinner");
+    const label = document.getElementById("button_label");
+
+    spinner.hidden = false;
+    label.innerText = "処理中...";
+
+    try {
+        const zip = await JSZip.loadAsync(file);
+        const newZip = new JSZip();
+
+        let bandFolder = null;
+
+        Object.keys(zip.files).forEach(path => {
+            if (path.endsWith(".band/") && !path.startsWith("__MACOSX")) {
+                bandFolder = path;
+            }
+        });
+
+        if (!bandFolder) {
+            alert(".bandフォルダが見つかりません");
+            resetUI();
+            return;
+        }
+
+        const targetPath = bandFolder + "projectData";
+
+        if (!zip.files[targetPath]) {
+            alert("projectData が見つかりません");
+            resetUI();
+            return;
+        }
+
+        const content = await zip.files[targetPath].async("blob");
+        newZip.file(targetPath, content);
+
+        const blob = await newZip.generateAsync({type:"blob"});
+
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = file.name.replace(".zip", "_reduced.zip");
+        a.click();
+        URL.revokeObjectURL(url);
+
+    } catch (e) {
+        alert("エラーが発生しました");
+    }
+
+    resetUI();
+}
+
+function resetUI(){
+    document.getElementById("spinner").hidden = true;
+    document.getElementById("button_label").innerText = "サイズ削減開始";
+    processButton.disabled = fileInput.files.length === 0;
+}
+
+</script>
+
+</body>
+</html>
