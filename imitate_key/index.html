@@ -1,0 +1,195 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <title>Imitate Key</title>
+    <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+JP:wght@300;700&display=swap" rel="stylesheet">
+    <style>
+        * { box-sizing: border-box; }
+        body {
+            margin: 0;
+            background: #000;
+            color: #fff;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            min-height: 100vh;
+            font-family: 'Noto Sans JP', sans-serif;
+            letter-spacing: 0.1em;
+        }
+        .container { width: 330px; }
+        .ui {
+            display: flex;
+            width: 100%;
+            gap: 10px;
+            margin-bottom: 10px;
+        }
+        input[type="file"] { display: none; }
+        label, button {
+            background: #222;
+            color: #fff;
+            border: none;
+            padding: 18px 0;
+            flex: 1;
+            cursor: pointer;
+            font-size: 11px;
+            font-weight: 700;
+            transition: background 0.2s;
+            display: block;
+            text-align: center;
+            line-height: 1;
+        }
+        label:hover, button:not(:disabled):hover { background: #333; }
+        label:active, button:not(:disabled):active { background: #444; }
+        button:disabled {
+            background: #111;
+            color: #444;
+            cursor: not-allowed;
+        }
+        #preview {
+            display: block;
+            width: 330px;
+            height: auto;
+            background: #000;
+        }
+    </style>
+</head>
+<body>
+
+<div class="container">
+    <div class="ui">
+        <label for="midiInput">選択</label>
+        <button id="startBtn" disabled>書き出し</button>
+        <input type="file" id="midiInput" accept=".mid,.midi">
+    </div>
+    <canvas id="preview"></canvas>
+</div>
+
+<script type="module">
+import { Midi } from "https://cdn.jsdelivr.net/npm/@tonejs/midi@2.0.28/+esm";
+import * as MP4 from "https://cdn.jsdelivr.net/npm/mp4-muxer@5.2.0/build/mp4-muxer.mjs";
+
+class App {
+    constructor() {
+        this.canvas = document.getElementById("preview");
+        this.ctx = this.canvas.getContext("2d", { alpha: false });
+        this.input = document.getElementById("midiInput");
+        this.btn = document.getElementById("startBtn");
+        this.images = new Map();
+        this.fps = 60;
+        this.allNotes = [];
+        this.duration = 0;
+        this.minNote = 0;
+    }
+
+    async init() {
+        await this.loadImages();
+
+        this.input.onchange = async e => {
+            const file = e.target.files[0];
+            if (!file) return;
+            
+            const midi = new Midi(await file.arrayBuffer());
+            this.duration = midi.duration;
+            this.allNotes = midi.tracks.flatMap(t => t.notes);
+            
+            if (this.allNotes.length > 0) {
+                this.minNote = Math.min(...this.allNotes.map(n => n.midi));
+                this.btn.disabled = false;
+                this.btn.textContent = "書き出し";
+            }
+        };
+
+        this.btn.onclick = () => this.render();
+    }
+
+    async loadImages() {
+        const keys = ["none", ...Array.from({ length: 13 }, (_, i) => i)];
+        await Promise.all(keys.map(k => new Promise(r => {
+            const img = new Image();
+            img.src = `key_${k}.webp`;
+            img.onload = () => {
+                if (k === "none") {
+                    this.canvas.width = img.width;
+                    this.canvas.height = img.height;
+                }
+                this.images.set(k.toString(), img);
+                r();
+            };
+            img.onerror = r;
+        })));
+    }
+
+    async render() {
+        this.btn.disabled = true;
+        const totalFrames = Math.max(1, Math.ceil(this.duration * this.fps));
+
+        const muxer = new MP4.Muxer({
+            target: new MP4.ArrayBufferTarget(),
+            video: { codec: "avc", width: this.canvas.width, height: this.canvas.height },
+            fastStart: "in-memory"
+        });
+
+        const encoder = new VideoEncoder({
+            output: (chunk, meta) => muxer.addVideoChunk(chunk, meta),
+            error: e => console.error(e)
+        });
+
+        await encoder.configure({
+            codec: "avc1.4d001f",
+            width: this.canvas.width,
+            height: this.canvas.height,
+            bitrate: 8_000_000,
+            framerate: this.fps
+        });
+
+        for (let frame = 0; frame < totalFrames; frame++) {
+            const currentTime = frame / this.fps;
+            let activeKey = "none";
+            let maxMidi = -1;
+
+            for (const n of this.allNotes) {
+                if (currentTime >= n.time && currentTime < n.time + n.duration) {
+                    const rel = n.midi - this.minNote;
+                    if (rel >= 0 && rel <= 12 && rel > maxMidi) {
+                        maxMidi = rel;
+                        activeKey = rel.toString();
+                    }
+                }
+            }
+
+            const img = this.images.get(activeKey) || this.images.get("none");
+            this.ctx.drawImage(img, 0, 0);
+
+            const vf = new VideoFrame(this.canvas, { 
+                timestamp: Math.round(frame * (1_000_000 / this.fps)) 
+            });
+            encoder.encode(vf, { keyFrame: frame % 60 === 0 });
+            vf.close();
+
+            if (frame % 15 === 0) {
+                this.btn.textContent = `${Math.floor((frame / totalFrames) * 100)}%`;
+                await new Promise(r => requestAnimationFrame(r));
+            }
+        }
+
+        await encoder.flush();
+        encoder.close();
+        muxer.finalize();
+
+        const blob = new Blob([muxer.target.buffer], { type: "video/mp4" });
+        const a = Object.assign(document.createElement("a"), {
+            href: URL.createObjectURL(blob),
+            download: "output.mp4"
+        });
+        a.click();
+        
+        this.btn.disabled = false;
+        this.btn.textContent = "書き出し";
+    }
+}
+
+new App().init();
+</script>
+</body>
+</html>
