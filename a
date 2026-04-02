@@ -1,0 +1,6 @@
+color 0a
+echo off
+echo 馬鹿が騙されてやんの
+echo ちゃんと正規版買おうね
+echo 以上
+pause > NUL
